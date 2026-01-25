@@ -101,13 +101,26 @@ def q_learning(env, num_episodes, discount_factor=1.0, alpha=0.5, epsilon=0.1, m
         # One step in the environment (with max_steps safety limit)
         for t in range(max_steps):
             #########################Implement your code here#########################
-            raise NotImplementedError("Not implemented")
             # step 1 : Take a step
+            action_probs = policy(state)
+            action = np.random.choice(np.arange(len(action_probs)), p=action_probs)
+            next_state, reward, done, _ = env.step(action)
 
-            # step 2 : TD Update (with terminal handling)
+            # 更新统计
+            stats.episode_rewards[i_episode] += reward
+            stats.episode_lengths[i_episode] = t
 
-            # step 3 : Move to next state and handle episode end
+            # step 2 : TD Update (Off-policy)
+            # 关键：使用 max Q(S', a) 而不是当前策略选中的动作
+            best_next_action = np.argmax(Q[next_state])    
+            td_target = reward + discount_factor * Q[next_state][best_next_action]
+            td_delta = td_target - Q[state][action]
+            Q[state][action] += alpha * td_delta
 
+            # step 3 : Move to next state
+            if done:
+                break
+            state = next_state
             #########################Implement your code end#########################
     return Q, stats
 
@@ -131,12 +144,30 @@ def double_q_learning(env, num_episodes, discount_factor=1.0, alpha=0.5, epsilon
 
         for t in range(max_steps):
             #########################Implement your code here#########################       
-            raise NotImplementedError("Not implemented")
             # step 1 : Take a step using combined Q1+Q2 policy
+            action_probs = policy(state)
+            action = np.random.choice(np.arange(len(action_probs)), p=action_probs)
+            next_state, reward, done, _ = env.step(action)
+
+            stats.episode_rewards[i_episode] += reward
+            stats.episode_lengths[i_episode] = t
 
             # step 2 : Double Q-learning update
+            if np.random.rand() < 0.5:
+                # 用 Q1 选择动作，用 Q2 评估价值
+                best_next_a = np.argmax(Q1[next_state])
+                td_target = reward + discount_factor * Q2[next_state][best_next_a]
+                Q1[state][action] += alpha * (td_target - Q1[state][action])
+            else:
+                # 用 Q2 选择动作，用 Q1 评估价值
+                best_next_a = np.argmax(Q2[next_state])
+                td_target = reward + discount_factor * Q1[next_state][best_next_a]
+                Q2[state][action] += alpha * (td_target - Q2[state][action])
 
-            # step 3 : Move to next state and handle episode end
+            # step 3 : Move to next state
+            if done:
+                break
+            state = next_state
             #########################Implement your code end#########################
                 
     return Q1, Q2, stats
