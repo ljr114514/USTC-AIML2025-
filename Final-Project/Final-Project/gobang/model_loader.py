@@ -1,23 +1,26 @@
-import torch.nn as nn
-from typing import *
-from utils import *
-import numpy as np
 import torch
+from utils import *
+from submission import GobangModel
 
 board_size = 12
 bound = 5
 
 
-# Load models using functions 'get_model' without passing any extra
-# parameters, so that we can directly call get_model() in player.py and evaluator.py.
-
-
 def get_model():
-    # from submission import GobangModel
-    # model = GobangModel(board_size=board_size, bound=bound)
-    # model.load_state_dict(torch.load('model.pth'))
-    # return model
-    raise NotImplementedError("Not implemented!")
+    """
+    Load and return the trained black-player model.
+    """
+    model = GobangModel(board_size=board_size, bound=bound)
+
+    # 修改为你最终保存的模型路径
+    model_path = "checkpoints/model_final.pth"
+
+    state_dict = torch.load(model_path, map_location=device)
+    model.load_state_dict(state_dict)
+
+    model.to(device)
+    model.eval()
+    return model
 
 
 __all__ = ['get_model']
