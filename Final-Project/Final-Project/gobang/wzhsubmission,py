@@ -1,0 +1,276 @@
+from utils import *
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import *
+import sys
+import argparse
+
+parser = argparse.ArgumentParser(description='args')
+parser.add_argument('--num_episodes', type=int, default=28000, help='number of episodes')
+parser.add_argument('--checkpoint', type=int, default=4000, help='the interval of saving models')
+parser.add_argument('--use_wandb', action='store_true', help='use wandb for experiment tracking')
+parser.add_argument('--wandb_project', type=str, default='gobang-rl-AI3002', help='wandb project name')
+parser.add_argument('--wandb_name', type=str, default=None, help='wandb run name')
+args = parser.parse_args()
+num_episodes = args.num_episodes
+checkpoint = args.checkpoint
+
+
+class SelfAttention(nn.Module):
+    """
+    Self-Attention Layer to capture global dependencies on the Gobang board.
+    Useful for detecting long-range threats or connections.
+    """
+    def __init__(self, channels):
+        super().__init__()
+        self.mha = nn.MultiheadAttention(embed_dim=channels, num_heads=4, batch_first=True)
+        self.ln = nn.LayerNorm(channels)
+
+    def forward(self, x):
+        # Input x: (B, C, N, N)
+        B, C, H, W = x.shape
+        # Flatten spatial dimensions: (B, C, N*N) -> Permute for MHA: (B, N*N, C)
+        flat = x.flatten(2).permute(0, 2, 1)
+        
+        # Self-Attention
+        attn_out, _ = self.mha(flat, flat, flat)
+        
+        # Residual Connection + Normalization
+        out = self.ln(flat + attn_out)
+        
+        # Reshape back to spatial: (B, C, N, N)
+        return out.permute(0, 2, 1).reshape(B, C, H, W)
+
+
+class ResBlock(nn.Module):
+    """Residual Block to allow deeper networks without gradient vanishing."""
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+    def forward(self, x):
+        residual = x
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += residual
+        return F.relu(out)
+
+
+class Actor(nn.Module):
+    def __init__(self, board_size: int, lr=1e-4):
+        super().__init__()
+        self.board_size = board_size
+        filters = 64
+
+        # 1. Feature Extraction Stem
+        self.start_block = nn.Sequential(
+            nn.Conv2d(1, filters, kernel_size=3, padding=1),
+            nn.BatchNorm2d(filters),
+            nn.ReLU()
+        )
+
+        # 2. Deep Backbone with Attention
+        self.backbone = nn.Sequential(
+            ResBlock(filters, filters),
+            SelfAttention(filters),     # Capture global board context
+            ResBlock(filters, filters),
+            ResBlock(filters, filters)
+        )
+
+        # 3. Policy Head (Output logits for N*N positions)
+        self.policy_head = nn.Sequential(
+            nn.Conv2d(filters, 4, kernel_size=1),
+            nn.BatchNorm2d(4),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(4 * board_size * board_size, board_size * board_size)
+        )
+
+        self.optimizer = torch.optim.Adam(params=self.parameters(), lr=lr)
+
+    def forward(self, x: np.ndarray):
+        # Standardization of input shape
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x).to(device).to(torch.float32)
+        if len(x.shape) == 2:
+            x = x.unsqueeze(0).unsqueeze(0) # (1, 1, N, N)
+        elif len(x.shape) == 3:
+            x = x.unsqueeze(1) # (B, 1, N, N)
+
+        # Create mask for legal actions (0 in board means empty/legal)
+        # Input x contains 0 (empty), 1 (black), 2 (white)
+        # We need to flatten the mask to match (B, N*N)
+        board_flat = x.view(x.size(0), -1)
+        legal_mask = (board_flat == 0).float()
+
+        # Network Pass
+        out = self.start_block(x)
+        out = self.backbone(out)
+        logits = self.policy_head(out)
+
+        # MASKING ILLEGAL ACTIONS
+        # Replace logits of occupied spots with -1e9 so Softmax makes them 0
+        logits = torch.where(legal_mask == 1, logits, torch.tensor(-1e9).to(device))
+
+        # Normalization (Softmax)
+        probs = F.softmax(logits, dim=1)
+        
+        return probs
+
+
+class Critic(nn.Module):
+    def __init__(self, board_size: int, lr=2e-4): # Slightly higher LR for Critic
+        super().__init__()
+        self.board_size = board_size
+        filters = 64
+
+        # Shared architecture philosophy with Actor
+        self.start_block = nn.Sequential(
+            nn.Conv2d(1, filters, kernel_size=3, padding=1),
+            nn.BatchNorm2d(filters),
+            nn.ReLU()
+        )
+
+        self.backbone = nn.Sequential(
+            ResBlock(filters, filters),
+            SelfAttention(filters),
+            ResBlock(filters, filters)
+        )
+
+        # Value Head - Outputs Q values for ALL positions
+        self.value_head = nn.Sequential(
+            nn.Conv2d(filters, 1, kernel_size=1),
+            nn.BatchNorm2d(1),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(board_size * board_size, 256),
+            nn.ReLU(),
+            nn.Linear(256, board_size * board_size)
+        )
+
+        self.optimizer = torch.optim.Adam(params=self.parameters(), lr=lr)
+
+    def forward(self, x: np.ndarray, action: np.ndarray):
+        # Standardization
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x).to(device).to(torch.float32)
+        if len(x.shape) == 2:
+            x = x.unsqueeze(0).unsqueeze(0)
+        elif len(x.shape) == 3:
+            x = x.unsqueeze(1)
+        
+        # Network Pass
+        out = self.start_block(x)
+        out = self.backbone(out)
+        q_map = self.value_head(out) # (B, N*N)
+
+        # Extract Q-values for the specific actions provided
+        indices = torch.tensor([_position_to_index(self.board_size, r, c) for r, c in action]).to(device)
+        
+        # Gather Q-values: [Batch 0 -> Index 0, Batch 1 -> Index 1, ...]
+        batch_indices = torch.arange(x.size(0)).to(device)
+        output = q_map[batch_indices, indices]
+
+        return output
+
+
+class GobangModel(nn.Module):
+    def __init__(self, board_size: int, bound: int):
+        super().__init__()
+        self.bound = bound
+        self.board_size = board_size
+
+        # Register Actor and Critic
+        self.actor = Actor(board_size=board_size, lr=1e-4)
+        self.critic = Critic(board_size=board_size, lr=1e-4)
+
+        self.to(device)
+
+    def forward(self, x, action):
+        return self.actor(x), self.critic(x, action)
+
+    def optimize(self, policy, qs, actions, rewards, next_qs, gamma, eps=1e-6):
+        """
+        Calculates loss and optimizes Actor and Critic.
+        Fixes: 
+        1. Added .step() calls.
+        2. Corrected zero_grad placement.
+        3. Corrected .detach() logic for stable training.
+        """
+        
+        # --- CRITIC OPTIMIZATION ---
+        # Target = r + gamma * Q(s', a')
+        # BUG FIX: Detach next_qs to prevent gradients flowing into the target
+        targets = rewards + gamma * next_qs.detach()
+        
+        critic_loss = nn.MSELoss()(qs, targets) # MSE(Prediction, Target)
+
+        self.critic.optimizer.zero_grad()
+        critic_loss.backward()
+        self.critic.optimizer.step() # BUG FIX: Added step()
+
+        # --- ACTOR OPTIMIZATION ---
+        # Loss = - log(pi(a|s)) * Advantage
+        # Here Advantage is approximated by Q(s,a)
+        
+        indices = torch.tensor([_position_to_index(self.board_size, x, y) for x, y in actions]).to(device)
+        aimed_policy = policy[torch.arange(len(indices)), indices]
+        
+        # BUG FIX: Detach qs. The Actor should not update the Critic's weights to make Q-values higher.
+        # It should only update its own weights to make prob higher for high Q-values.
+        actor_loss = -torch.mean(torch.log(aimed_policy + eps) * qs.detach())
+
+        self.actor.optimizer.zero_grad()
+        actor_loss.backward()
+        self.actor.optimizer.step() # BUG FIX: Added step()
+
+        return actor_loss, critic_loss
+
+
+if __name__ == "__main__":
+    import wandb
+
+    # ===============================
+    # 强制初始化 wandb（关键）
+    # ===============================
+    if args.use_wandb:
+        wandb.init(
+            project=args.wandb_project,
+            name=args.wandb_name,
+            config={
+                "num_episodes": num_episodes,
+                "checkpoint": checkpoint,
+                "board_size": 12,
+                "bound": 5,
+                "architecture": "ResNet-Attention-AC"
+            }
+        )
+        print("Wandb initialized (online).")
+    else:
+        # 关键：即使不用 wandb，也 init，但用 disabled 模式
+        wandb.init(mode="disabled")
+        print("Wandb initialized (disabled mode).")
+
+    # ===============================
+    # 初始化模型
+    # ===============================
+    agent = GobangModel(board_size=12, bound=5).to(device)
+
+    # ===============================
+    # 开始训练
+    # ===============================
+    train_model(
+        agent,
+        num_episodes=num_episodes,
+        checkpoint=checkpoint
+    )
+
+    # ===============================
+    # 结束 wandb
+    # ===============================
+    wandb.finish()
