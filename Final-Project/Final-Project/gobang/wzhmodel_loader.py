@@ -20,7 +20,7 @@ def get_model():
         #model_type=model_type
     )
 
-    model_path = "checkpoints/model_15999.pth"
+    model_path = "checkpoints/model_11999.pth"
 
     state_dict = torch.load(model_path, map_location=device)
     model.load_state_dict(state_dict)   # strict=True 默认，结构一致就不会炸
