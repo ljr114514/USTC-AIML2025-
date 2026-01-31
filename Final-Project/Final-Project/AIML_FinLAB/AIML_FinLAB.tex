@@ -1,0 +1,220 @@
+\documentclass[12pt,a4paper]{ctexart}
+\ctexset{
+  section = {
+    format = \raggedright\Large\bfseries
+  }
+}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{amsfonts}
+\usepackage{amsthm}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+
+\title{USTC AI3002 Final-Project 实验报告}
+\author{王梓浩 \and 刘谨睿 \and 崇时瑞}
+
+\begin{document}
+\maketitle
+\newpage
+\section{环境配置}
+
+%我的环境配置
+崇时瑞： \begin{itemize}
+    \item Pytorch: 2.6.0+cu126
+    \item CUDA 可用
+    \item 显卡： NVIDIA GeForce RTX 4070 Laptop GPU
+\end{itemize}
+
+\begin{figure}[h]
+    \centering    
+    \includegraphics[width=0.8\textwidth]{1}
+    \caption{相关配置截图}
+\end{figure}
+
+%需要填写的环境配置
+
+%需要填写的环境配置
+\newpage
+\section{Warm-up}
+\subsection{Monte Carlo Learning}
+\subsubsection{First-visit MC核心思想}
+原理简述：\\
+First-Visit MC 通过计算状态 $s$ 在多个回合中首次出现后的平均回报来估算其价值。
+其核心逻辑基于大数定律，即经验平均值在样本足够多时会收敛于期望值。\par
+算法核心步骤：
+
+\begin{enumerate}
+    \item {采样}：按照策略 $\pi$ 生成一个完整的回合（Episode）。
+    \item {识别}：在该回合中，仅标记每个状态 $s$ 第一次出现的时刻 $t$。
+    \item {更新}：计算从 $t$ 开始的回报 $G_t = \sum_{k=0}^{T-t-1} \gamma^k R_{t+k+1}$，并更新价值函数：
+    \begin{equation}
+        V(S_t) \leftarrow V(S_t) + \alpha [G_t - V(S_t)]
+    \end{equation}
+\end{enumerate}
+
+特点总结：
+\begin{itemize}
+    \item 无偏性：直接利用实际回报，不依赖其他状态的估计值。
+    \item 收敛慢：必须完成整个回合才能更新，方差通常较大。
+\end{itemize}
+
+\subsubsection{Black Jack 实验结果及分析}
+本实验对比了不同训练轮数下，First-Visit MC 算法对 Blackjack 环境价值函数的估计效果。图 \ref{fig:mc_results} 展示了在是否有 Usable Ace 的情况下，10,000 次与 500,000 次迭代的结果。
+
+\begin{figure}[htbp]
+    \centering
+
+    \begin{subfigure}[h]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{MC_10k_ace.png}
+        \caption{10,000 Episodes (Usable Ace)}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[h]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{MC_10k_no_ace.png}
+        \caption{10,000 Episodes (No Usable Ace)}
+    \end{subfigure}
+    
+    \vspace{1em}
+    
+    \begin{subfigure}[h]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{MC_500k_ace.png}
+        \caption{500,000 Episodes (Usable Ace)}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[h]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{MC_500k_no_ace.png}
+        \caption{500,000 Episodes (No Usable Ace)}
+    \end{subfigure}
+    
+    \caption{不同迭代次数下 MC 算法估算的价值函数曲面对比}
+    \label{fig:mc_results}
+\end{figure}
+
+\par 结果讨论
+\begin{itemize}
+    \item 样本量对平滑度的影响：从图中可以观察到，10k 次迭代时曲面存在明显的锯齿状波动，这是由于 MC 方法方差较大导致的。当迭代次数增加至 500k 时，价值函数曲面变得平滑且稳定，证明了算法的收敛性。
+    \item 状态价值分布：在所有情况下，玩家总和达到 20 或 21 时，状态价值均接近 1.0（红色区域），而当庄家明牌为 A 且玩家总和较低时，价值明显降低。
+    \item Usable Ace 的作用：拥有 Usable Ace 的曲面（a, c）在中间区域比无 Ace（b, d）更加平缓，反映了 A 牌作为 11 点使用时提供的额外生存机会。
+\end{itemize}
+
+\subsection{Temporal-Difference Learning}
+
+\subsubsection{两种算法在 CliffWalking 的训练曲线对比}
+
+在 CliffWalking 环境中，我们对比了 Q-learning（Off-policy）与 SARSA（On-policy）的表现。图 \ref{fig:td_comparison} 展示了两者的每回合回报（Episode Reward）与回合步数（Episode Length）的收敛过程。
+
+\begin{figure}[htbp]
+    \centering
+    % 第一行：Reward 对比
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{episode_stats_q_learning_reward.png}
+        \caption{Q-learning 每回合回报}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{episode_stats_sarsa_reward.png}
+        \caption{SARSA 每回合回报}
+    \end{subfigure}
+
+    \vspace{1em}
+
+    % 第二行：Length 对比
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{episode_stats_q_learning_length.png}
+        \caption{Q-learning 回合步数}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{episode_stats_sarsa_length.png}
+        \caption{SARSA 回合步数}
+    \end{subfigure}
+    
+    \caption{Q-learning 与 SARSA 在 CliffWalking 环境下的训练统计对比}
+    \label{fig:td_comparison}
+\end{figure}
+
+实验观察：
+\begin{itemize}
+    \item 收敛速度：从步数曲线可以看出，两种算法在前 100 个回合内均能迅速将步数从数百步降低至 50 步以内，体现了 TD 学习的高效性。
+    \item 回报波动：对比图 (a) 与 (b)，Q-learning 在收敛后的回报曲线上存在密集的负向“深坑”（Spikes），即即便在后期也经常触发 $-100$ 的掉落惩罚。相比之下，SARSA 的收敛曲线更加平稳，其平滑后的平均回报明显高于 Q-learning。
+\end{itemize}
+
+\subsubsection{SARSA 与 Q-learning 的差异分析}
+
+结合“更安全路径 vs 更激进路径”的现象，两者的核心差异在于对 探索风险的处理方式：
+
+\begin{enumerate}
+    \item Q-learning (Off-policy) 的激进策略：
+    Q-learning 学习的是目标策略（Optimal Policy），即沿着悬崖边走的最近路径。然而，由于训练中存在 $\epsilon$-greedy 探索，智能体有概率随机动作。在悬崖边进行随机动作极易导致掉落。因此，虽然它找到了理论最优路径，但在训练过程中的在线表现较差。
+
+    \item SARSA (On-policy) 的安全策略：
+    SARSA 在更新价值函数时考虑了当前的探索行为。它“意识到”在悬崖边探索会导致惨重损失，因此它学习到了一条虽然路径稍长、但远离悬崖边缘的安全路径。这使得 SARSA 在存在探索随机性的情况下，能够获得更高的累积奖励。
+\end{enumerate}
+
+结论：Q-learning 追求的是“理论最优”，适用于环境模型固定且执行时无随机扰动的场景；而 SARSA 追求的是“行为最优”，在探索阶段或环境具有随机性时表现得更加稳健。
+
+\subsection{推荐选做部分}
+
+\newpage
+\section{Main Task}
+
+
+\subsection{利用MCTS进行的模型优化}
+\subsubsection{核心逻辑实现}
+在 AlphaZero 框架中，我们利用MCTS承担了策略改进器的角色。我们通过在每个状态下进行多次模拟搜索，得到一个比纯神经网络输出更稳健的动作概率分布。为了解决 $12 \times 12$ 大规模棋盘带来的数值不稳定问题，我们在代码中实现了带有温度参数的 Log-Sum-Exp 稳定逻辑。
+
+
+\begin{quote}
+\small
+\begin{verbatim}
+def get_action_probs(self, state, temp=1.0):
+    # 执行 n_simulations 次模拟搜索 (n=100)
+    for _ in range(self.n_simulations):
+        self._simulate(state)
+        
+    counts = np.array([child.visit_count for child in root.children.values()])
+    actions = list(root.children.keys())
+
+    # 针对温度极低的情况进行分支处理，防止除以零
+    if temp < 1e-3:
+        probs = np.zeros(self.board_size**2)
+        probs[actions[np.argmax(counts)]] = 1.0
+        return probs
+    
+    # 核心优化：使用 Log 空间计算防止数值溢出
+    log_counts = np.log(counts + 1e-8) * (1.0 / temp)
+    exp_counts = np.exp(log_counts - np.max(log_counts))
+    probs_on_actions = exp_counts / np.sum(exp_counts)
+    
+    full_probs = np.zeros(self.board_size**2)
+    full_probs[actions] = probs_on_actions
+    return full_probs
+\end{verbatim}
+\end{quote}
+
+\subsubsection{实验结果与效率分析}
+
+\textbf{1. 训练吞吐量统计} \par
+在本实验环境下，针对 $12 \times 12$ 规模的五子棋任务，系统在 12 小时的连续训练中完成了约 3800 个自博弈回合（Episodes）。虽然单回合生成的耗时较长（平均约 11.4 秒），但这保证了每一个样本都经过了深度的 MCTS 搜索（每次动作模拟 100 次），从而提供了高质量的梯度方向。
+
+\textbf{2. 模型性能评估} \par
+尽管训练步数有限，但模型的收敛质量超出了预期。经过约 3,000 轮的神经网络参数优化后，我们将该模型与执行完全随机策略的智能体进行了 100 场对局测试。
+结果显示：模型达到了 100\% 的胜率。
+
+这表明模型已经从最初的随机噪声中脱颖而出，成功掌握了五子棋的基础落子逻辑与防守技巧，验证了 MCTS 引导下的策略提升逻辑在 $12 \times 12$ 棋盘上的有效性。由与时间有限，以及MCTS方法的开销较大，后续的训练并未继续。
+\end{document}
