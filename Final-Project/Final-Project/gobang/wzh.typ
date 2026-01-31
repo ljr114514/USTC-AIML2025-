@@ -89,7 +89,91 @@ image("cliffwalking.png", width: 80%)
 （与 First-Visit 对比）
 
 ==== 1.3.2 Double Q-learning
-（过估计问题讨论）
+#image("episode_stats_double_q_learning_length.png",width:35%)
+#image("episode_stats_double_q_learning_reward.png",width:35%)
+
+#image("episode_stats_q_learning_length.png",width:35%)
+#image("episode_stats_q_learning_reward.png",width:35%)
+
+共同点
+
+两者在前期 episode length 都非常大（400–600 步），说明：
+
+初期策略接近随机
+
+agent 经常在环境中“乱走”或反复试探
+
+随着训练推进，episode length 都迅速下降并趋于稳定（≈15–30 步）
+
+差异
+
+Double Q-learning
+
+收敛过程更平滑
+
+后期 episode length 波动略小
+
+Q-learning
+
+虽然也能快速下降
+
+后期仍可看到更多“尖峰”（偶尔走冤枉路）
+
+Episode Reward（平滑后）
+
+Q-learning 的 reward 曲线
+
+前期 reward 从 ≈ -300 快速上升
+
+中后期：
+
+reward 大致稳定在 -40 到 -60
+
+但存在 频繁而明显的下跌
+
+有时突然掉到 -100 附近
+
+波动幅度较大
+
+Double Q-learning 的 reward 曲线
+
+上升趋势与 Q-learning 相似
+
+平均 reward 更高（更不负）
+
+大幅下跌显著减少
+
+曲线整体更加平滑
+
+原因:
+
+标准 Q-learning 的更新公式
+
+Q(s,a)←Q(s,a)+α(r+γa′max​Q(s′,a′)−Q(s,a))
+
+同一个 Q 表 ，既负责选动作，又负责评估动作
+
+容易选中被高估的动作，而不是真实最优动作
+
+E[max(Q+ϵ)]>max(E[Q])
+
+Q 值系统性偏大
+
+agent 过度自信
+
+实际执行时，发现动作没那么好 → reward 突然变差
+
+Double Q-learning
+
+a∗​=argamax​QA​(s′,a)
+
+QB(s,a)←QB(s,a)+α(r+γa′max​QA(s′,a′)−QB(s,a))
+
+QA选动作
+
+QB估价值
+
+QA的噪声不等于QB的噪声，两者不太可能同时高估一个动作​
 
 #pagebreak()
 
